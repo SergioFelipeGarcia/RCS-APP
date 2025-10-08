@@ -1,0 +1,25 @@
+Archivo .gitignore para el proyecto RCS
+1. Entorno Virtual de Python (¡Crucial!)
+Ignora la carpeta venv/ completa, ya que es específica de tu máquina.
+venv/
+
+2. Archivos temporales de Python
+Ignora los directorios creados por el compilador de Python.
+pycache/
+*.pyc
+*.pyo
+*.pyd
+
+3. Base de Datos Local
+La base de datos DuckDB es local y generada. No debe subirse al repositorio.
+rcs_data.duckdb
+
+4. Variables de Entorno (Datos sensibles como claves API)
+Aunque aún no usamos este archivo, es una buena práctica ignorar .env
+porque contendría secretos (como WEBHOOK_SECRET, claves API de Google, etc.)
+.env
+
+5. Archivos de sistema/editores
+.DS_Store
+.vscode/
+.idea/
