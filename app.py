@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 from flask import Flask, request, jsonify
 import hashlib
 import hmac
@@ -110,6 +112,33 @@ def webhook():
         # Determinar el tipo de evento
         event_type = detect_event_type(data)
         logger.info(f"📌 Tipo de evento: {event_type}")
+        
+        # =======================================================================
+        # INICIO DE LA MODIFICACIÓN: VERIFICACIÓN EXACTA SEGÚN GOOGLE
+        # =======================================================================
+        
+        # Caso especial: Verificación inicial de Google que incluye 'clientToken' y 'secret'
+        if event_type == 'unknown' and 'clientToken' in data and 'secret' in data:
+            logger.info("🔑 Recibida petición de verificación especial.")
+            
+            client_token = data.get('clientToken')
+            verification_secret = data.get('secret')
+            
+            # 1. Asegurarse de que el parámetro clientToken coincida con el secret
+            if client_token == verification_secret:
+                logger.info(f"✅ clientToken y secret coinciden: {client_token}")
+                
+                # 2. Devolver una respuesta 200 OK junto con el valor de secret
+                logger.info(f"🔓 Respondiendo 200 OK con el secreto: {verification_secret}")
+                return jsonify({'secret': verification_secret}), 200
+            else:
+                # Si no coinciden, la petición no es válida
+                logger.warning(f"❌ clientToken ({client_token}) y secret ({verification_secret}) NO coinciden.")
+                return jsonify({'error': 'clientToken y secret no coinciden'}), 401
+
+        # =======================================================================
+        # FIN DE LA MODIFICACIÓN
+        # =======================================================================
         
         if event_type == 'message':
             handle_message(data)
