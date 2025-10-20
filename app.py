@@ -107,6 +107,7 @@ def webhook():
             logger.warning("❌ No se recibió data JSON")
             return jsonify({'error': 'No data received'}), 400
         
+        # --- ESTA LÍNEA YA IMPRIME EL JSON COMPLETO PARA DEPURACIÓN ---
         logger.info(f"📦 Payload recibido:\n{json.dumps(data, indent=2)}")
         
         # Determinar el tipo de evento
@@ -133,7 +134,7 @@ def webhook():
         # =======================================================================
         
         if event_type == 'message':
-            handle_message(data)
+            handle_message(data) # <-- AQUÍ LLAMAMOS A LA FUNCIÓN MEJORADA
         elif event_type == 'userStatus':
             handle_user_status(data)
         elif event_type == 'receipt':
@@ -173,27 +174,67 @@ def detect_event_type(data):
         return 'unknown'
 
 
+# =============================================================================
+# FUNCIÓN MEJORADA PARA MANEJAR MENSAJES
+# =============================================================================
 def handle_message(data):
     """
-    Maneja mensajes de texto recibidos
+    Procesa los mensajes/eventos de usuario (una vez pasada la verificación).
+    Identifica el tipo de contenido (texto, tarjeta, etc.) y extrae los datos.
     """
-    message = data.get('message', {})
-    sender_id = data.get('senderPhoneNumber', 'Unknown')
-    message_id = message.get('messageId', 'Unknown')
-    text = message.get('text', '')
-    timestamp = data.get('sendTime', '')
+    logger.info("🚀 Iniciando procesamiento de un nuevo mensaje...")
     
-    logger.info(f"💬 Mensaje de texto:")
-    logger.info(f"   De: {sender_id}")
-    logger.info(f"   ID: {message_id}")
-    logger.info(f"   Texto: {text}")
-    logger.info(f"   Timestamp: {timestamp}")
+    # 1. Extraer información del remitente
+    sender_info = data.get('senderInformation', {})
+    sender_phone = sender_info.get('senderPhoneNumber') or data.get('senderPhoneNumber', 'Desconocido')
     
-    # TODO: Aquí va tu lógica de negocio
-    # - Guardar en base de datos
-    # - Enviar a sistema CRM
-    # - Responder automáticamente
-    pass
+    # 2. Extraer el contenido del mensaje
+    message_content = data.get('message', {})
+    message_id = message_content.get('messageId', 'ID_No_Disponible')
+    timestamp = data.get('sendTime', 'Timestamp_No_Disponible')
+
+    # 3. Imprimir cabecera del mensaje procesado
+    print("\n" + "="*50)
+    print(f"💬 NUEVO MENSAJE RECIBIDO DE: {sender_phone}")
+    print("="*50)
+
+    # 4. Manejar diferentes tipos de contenido del mensaje
+    if 'textEvent' in message_content:
+        # Es un mensaje de texto
+        text_data = message_content.get('textEvent', {})
+        text_content = text_data.get('text', 'Mensaje sin texto')
+        print(f"📝 Tipo: Mensaje de Texto")
+        print(f"   Contenido: '{text_content}'")
+
+    elif 'richCardEvent' in message_content:
+        # Es una tarjeta interactiva (carrusel, etc.)
+        card_data = message_content.get('richCardEvent', {})
+        print(f"🎨 Tipo: Tarjeta Interactiva (Rich Card)")
+        print(f"   Contenido de la tarjeta: {json.dumps(card_data, indent=4)}")
+
+    elif 'standaloneCardEvent' in message_content:
+        # Es una tarjeta individual
+        card_data = message_content.get('standaloneCardEvent', {})
+        print(f"🃏 Tipo: Tarjeta Individual (Standalone Card)")
+        print(f"   Contenido de la tarjeta: {json.dumps(card_data, indent=4)}")
+    
+    else:
+        # Es un mensaje vacío o de un tipo no reconocido
+        print(f"❓ Tipo: Mensaje vacío o no reconocido")
+
+    print(f"🆔 ID del Mensaje: {message_id}")
+    print(f"⏰ Enviado a las: {timestamp}")
+    print("="*50 + "\n")
+
+    # 5. Lógica de Negocio (Aquí es donde tú añadirías tu código)
+    # Ejemplo: if "hola" in text_content: ...
+    
+    logger.info(f"✅ Mensaje de '{sender_phone}' procesado correctamente.")
+
+
+# =============================================================================
+# FIN DE LA FUNCIÓN MEJORADA
+# =============================================================================
 
 
 def handle_user_status(data):
