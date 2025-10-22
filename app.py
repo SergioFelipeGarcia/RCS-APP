@@ -141,10 +141,13 @@ def webhook():
             message_type = attributes.get('message_type')
             logger.info(f"📌 Tipo de evento real (desde atributos): {message_type}")
             
-            # 3. Llamar al manejador correcto con los datos desempaquetados
+            
+           # 3. Llamar al manejador correcto con los datos desempaquetados
             if message_type == 'SUGGESTION_RESPONSE':
                 handle_suggestion_response(real_data)
-            elif message_type == 'message':
+            elif message_type == 'TEXT':  # <-- ¡AÑADE ESTA LÍNEA!
+                handle_message(real_data)
+            elif message_type == 'message': # Este se queda como fallback
                 handle_message(real_data)
             else:
                 logger.warning(f"⚠️ Tipo de mensaje no manejado: {message_type}")
