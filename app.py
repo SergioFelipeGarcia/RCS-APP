@@ -43,7 +43,7 @@ def verify_signature(request_data, signature_header):
         ).digest()
         
         # Codificar en base64
-        expected_signature_b64 = base64.b64encode(expected_signature).decode('utf-8')
+        expected_signature_b64 = base64.encodebytes(expected_signature).decode('utf-8').strip()
         
         # Comparar de forma segura
         is_valid = hmac.compare_digest(expected_signature_b64, signature_header)
@@ -80,13 +80,12 @@ def home():
 @app.route('/webhook', methods=['POST'])
 def webhook():
     """
-    Endpoint principal para recibir mensajes de Google RCS
+    Endpoint principal para recibir mensajes de Google RCS.
+    Maneja tanto mensajes directos como mensajes empaquetados (Pub/Sub).
     """
     try:
-        # Log de headers para debugging
         logger.info("=" * 50)
         logger.info("📨 Nueva solicitud recibida")
-        logger.info(f"Headers: {dict(request.headers)}")
         
         # Obtener el contenido de la solicitud
         request_data = request.get_data()
@@ -110,39 +109,66 @@ def webhook():
         # --- ESTA LÍNEA YA IMPRIME EL JSON COMPLETO PARA DEPURACIÓN ---
         logger.info(f"📦 Payload recibido:\n{json.dumps(data, indent=2)}")
         
-        # Determinar el tipo de evento
-        event_type = detect_event_type(data)
-        logger.info(f"📌 Tipo de evento: {event_type}")
-        
         # =======================================================================
-        # INICIO DE LA MODIFICACIÓN FINAL: VERIFICACIÓN CORRECTA
+        # LÓGICA ACTUALIZADA PARA MANEJAR MENSAJES EMPAQUETADOS Y DIRECTOS
         # =======================================================================
         
-        # Caso especial: Verificación inicial de Google que incluye 'clientToken' y 'secret'
-        if event_type == 'unknown' and 'clientToken' in data and 'secret' in data:
+        # Caso especial: Verificación inicial de Google
+        if 'clientToken' in data and 'secret' in data:
             logger.info("🔑 Recibida petición de verificación especial.")
-            
             verification_secret = data.get('secret')
             client_token = data.get('clientToken')
-            
             logger.info(f"🔓 Respondiendo 200 OK con el secreto: {verification_secret} (para clientToken: {client_token})")
-            # Simplemente devolvemos el secreto como pide Google, sin comparar.
             return jsonify({'secret': verification_secret}), 200
 
-        # =======================================================================
-        # FIN DE LA MODIFICACIÓN
-        # =======================================================================
-        
-        if event_type == 'message':
-            handle_message(data) # <-- AQUÍ LLAMAMOS A LA FUNCIÓN MEJORADA
-        elif event_type == 'userStatus':
-            handle_user_status(data)
-        elif event_type == 'receipt':
-            handle_receipt(data)
-        elif event_type == 'suggestionResponse':
-            handle_suggestion_response(data)
+        # Determinar si es un mensaje empaquetado (Pub/Sub) o directo
+        message_data = data.get('message', {})
+        attributes = message_data.get('attributes', {})
+
+        if attributes and 'message_type' in attributes:
+            # --- ES UN MENSAJE EMPAQUETADO (Pub/Sub) ---
+            logger.info("📦 Mensaje detectado en formato Pub/Sub. Desempaquetando...")
+            
+            # 1. Decodificar el contenido
+            encoded_data = message_data.get('data', '')
+            decoded_bytes = base64.b64decode(encoded_data)
+            real_data = json.loads(decoded_bytes.decode('utf-8'))
+            
+            logger.info("✅ Mensaje desempaquetado correctamente.")
+            logger.info(f"📦 Contenido real:\n{json.dumps(real_data, indent=2)}")
+            
+            # 2. Obtener el tipo de mensaje real desde los atributos
+            message_type = attributes.get('message_type')
+            logger.info(f"📌 Tipo de evento real (desde atributos): {message_type}")
+            
+            # 3. Llamar al manejador correcto con los datos desempaquetados
+            if message_type == 'SUGGESTION_RESPONSE':
+                handle_suggestion_response(real_data)
+            elif message_type == 'message':
+                handle_message(real_data)
+            else:
+                logger.warning(f"⚠️ Tipo de mensaje no manejado: {message_type}")
+
         else:
-            logger.warning(f"⚠️ Tipo de evento desconocido: {list(data.keys())}")
+            # --- ES UN MENSAJE DIRECTO (como el de curl o la verificación) ---
+            logger.info("📬 Mensaje detectado en formato directo.")
+            
+            # Usar la lógica original para determinar el tipo de evento
+            event_type = detect_event_type(data)
+            logger.info(f"📌 Tipo de evento (directo): {event_type}")
+            
+            if event_type == 'message':
+                handle_message(data)
+            elif event_type == 'userStatus':
+                handle_user_status(data)
+            elif event_type == 'receipt':
+                handle_receipt(data)
+            else:
+                logger.warning(f"⚠️ Tipo de evento desconocido: {list(data.keys())}")
+        
+        # =======================================================================
+        # FIN DE LA LÓGICA ACTUALIZADA
+        # =======================================================================
         
         # Responder con 200 OK (MUY IMPORTANTE para validación de Google)
         logger.info("✅ Respondiendo 200 OK")
@@ -160,7 +186,7 @@ def webhook():
 
 def detect_event_type(data):
     """
-    Detecta el tipo de evento recibido
+    Detecta el tipo de evento recibido (para mensajes directos)
     """
     if 'message' in data:
         return 'message'
@@ -175,118 +201,89 @@ def detect_event_type(data):
 
 
 # =============================================================================
-# FUNCIÓN MEJORADA PARA MANEJAR MENSAJES
+# FUNCIÓN MEJORADA PARA MANEJAR MENSAJES (ahora recibe datos ya procesados)
 # =============================================================================
 def handle_message(data):
     """
-    Procesa los mensajes/eventos de usuario (una vez pasada la verificación).
-    Identifica el tipo de contenido (texto, tarjeta, etc.) y extrae los datos.
+    Procesa los mensajes de texto o con contenido rico.
+    Asume que 'data' es el JSON ya desempaquetado y limpio.
     """
     logger.info("🚀 Iniciando procesamiento de un nuevo mensaje...")
     
-    # 1. Extraer información del remitente
-    sender_info = data.get('senderInformation', {})
-    sender_phone = sender_info.get('senderPhoneNumber') or data.get('senderPhoneNumber', 'Desconocido')
-    
-    # 2. Extraer el contenido del mensaje
-    message_content = data.get('message', {})
-    message_id = message_content.get('messageId', 'ID_No_Disponible')
+    # 1. Extraer información del remitente y contenido
+    sender_phone = data.get('senderPhoneNumber', 'Desconocido')
+    message_id = data.get('messageId', 'ID_No_Disponible')
     timestamp = data.get('sendTime', 'Timestamp_No_Disponible')
+    
+    message_content = data.get('textEvent', {})
+    text_content = message_content.get('text', 'Mensaje sin texto')
 
-    # 3. Imprimir cabecera del mensaje procesado
+    # 2. Imprimir cabecera del mensaje procesado
     print("\n" + "="*50)
     print(f"💬 NUEVO MENSAJE RECIBIDO DE: {sender_phone}")
     print("="*50)
-
-    # 4. Manejar diferentes tipos de contenido del mensaje
-    if 'textEvent' in message_content:
-        # Es un mensaje de texto
-        text_data = message_content.get('textEvent', {})
-        text_content = text_data.get('text', 'Mensaje sin texto')
-        print(f"📝 Tipo: Mensaje de Texto")
-        print(f"   Contenido: '{text_content}'")
-
-    elif 'richCardEvent' in message_content:
-        # Es una tarjeta interactiva (carrusel, etc.)
-        card_data = message_content.get('richCardEvent', {})
-        print(f"🎨 Tipo: Tarjeta Interactiva (Rich Card)")
-        print(f"   Contenido de la tarjeta: {json.dumps(card_data, indent=4)}")
-
-    elif 'standaloneCardEvent' in message_content:
-        # Es una tarjeta individual
-        card_data = message_content.get('standaloneCardEvent', {})
-        print(f"🃏 Tipo: Tarjeta Individual (Standalone Card)")
-        print(f"   Contenido de la tarjeta: {json.dumps(card_data, indent=4)}")
-    
-    else:
-        # Es un mensaje vacío o de un tipo no reconocido
-        print(f"❓ Tipo: Mensaje vacío o no reconocido")
-
+    print(f"📝 Tipo: Mensaje de Texto")
+    print(f"   Contenido: '{text_content}'")
     print(f"🆔 ID del Mensaje: {message_id}")
     print(f"⏰ Enviado a las: {timestamp}")
     print("="*50 + "\n")
 
-    # 5. Lógica de Negocio (Aquí es donde tú añadirías tu código)
-    # Ejemplo: if "hola" in text_content: ...
+    # 3. Lógica de Negocio (Aquí es donde tú añadirías tu código)
+    if "hola" in text_content.lower():
+        print("🤖 Se detectó un saludo. Aquí podrías enviar una respuesta automática.")
     
     logger.info(f"✅ Mensaje de '{sender_phone}' procesado correctamente.")
 
 
 # =============================================================================
-# FIN DE LA FUNCIÓN MEJORADA
+# FUNCIÓN PARA MANEJAR RESPUESTAS A SUGERENCIAS
 # =============================================================================
-
-
-def handle_user_status(data):
-    """
-    Maneja cambios de estado del usuario (typing indicators)
-    """
-    user_status = data.get('userStatus', {})
-    sender_id = data.get('senderPhoneNumber', 'Unknown')
-    is_typing = user_status.get('isTyping', False)
-    
-    logger.info(f"⌨️ Estado de usuario:")
-    logger.info(f"   Usuario: {sender_id}")
-    logger.info(f"   Estado: {'escribiendo...' if is_typing else 'detuvo de escribir'}")
-
-
-def handle_receipt(data):
-    """
-    Maneja confirmaciones de entrega/lectura
-    """
-    receipt = data.get('receipt', {})
-    message_id = receipt.get('messageId', 'Unknown')
-    receipt_type = receipt.get('receiptType', 'Unknown')
-    timestamp = data.get('sendTime', '')
-    
-    logger.info(f"📧 Recibo:")
-    logger.info(f"   Mensaje ID: {message_id}")
-    logger.info(f"   Tipo: {receipt_type}")
-    logger.info(f"   Timestamp: {timestamp}")
-
-
 def handle_suggestion_response(data):
     """
-    Maneja respuestas a sugerencias (botones, acciones sugeridas)
+    Maneja respuestas a sugerencias (botones, acciones sugeridas).
+    Asume que 'data' es el JSON ya desempaquetado y limpio.
     """
+    logger.info("🚀 Iniciando procesamiento de una respuesta a sugerencia...")
+    
+    sender_phone = data.get('senderPhoneNumber', 'Desconocido')
+    message_id = data.get('messageId', 'ID_No_Disponible')
+    
     suggestion_response = data.get('suggestionResponse', {})
-    sender_id = data.get('senderPhoneNumber', 'Unknown')
     postback_data = suggestion_response.get('postbackData', '')
     text = suggestion_response.get('text', '')
     
-    logger.info(f"🔘 Respuesta a sugerencia:")
-    logger.info(f"   De: {sender_id}")
-    logger.info(f"   Texto: {text}")
-    logger.info(f"   Postback: {postback_data}")
-    
+    print("\n" + "="*50)
+    print(f"🔘 RESPUESTA A SUGERENCIA RECIBIDA DE: {sender_phone}")
+    print("="*50)
+    print(f"   Texto: '{text}'")
+    print(f"   Postback Data: '{postback_data}'")
+    print("="*50 + "\n")
+
     # TODO: Implementar lógica según el postback
+    logger.info(f"✅ Respuesta a sugerencia de '{sender_phone}' procesada correctamente.")
+
+
+# =============================================================================
+# FUNCIONES PARA OTROS EVENTOS (sin cambios)
+# =============================================================================
+def handle_user_status(data):
+    """Maneja cambios de estado del usuario (typing indicators)."""
+    user_status = data.get('userStatus', {})
+    sender_id = data.get('senderPhoneNumber', 'Unknown')
+    is_typing = user_status.get('isTyping', False)
+    logger.info(f"⌨️ Estado de usuario: {sender_id} está {'escribiendo...' if is_typing else 'inactivo'}.")
+
+def handle_receipt(data):
+    """Maneja confirmaciones de entrega/lectura."""
+    receipt = data.get('receipt', {})
+    message_id = receipt.get('messageId', 'Unknown')
+    receipt_type = receipt.get('receiptType', 'Unknown')
+    logger.info(f"📧 Recibo: Mensaje {message_id} marcado como '{receipt_type}'.")
 
 
 @app.route('/health', methods=['GET'])
 def health():
-    """
-    Endpoint de health check para monitoreo
-    """
+    """Endpoint de health check para monitoreo."""
     return jsonify({
         'status': 'healthy',
         'timestamp': datetime.utcnow().isoformat(),
