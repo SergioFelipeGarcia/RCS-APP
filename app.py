@@ -209,19 +209,24 @@ def detect_event_type(data):
 def handle_message(data):
     """
     Procesa los mensajes de texto o con contenido rico.
-    Asume que 'data' es el JSON ya desempaquetado y limpio.
+    Ahora busca el texto en las claves correctas tanto para mensajes simples como complejos.
     """
     logger.info("🚀 Iniciando procesamiento de un nuevo mensaje...")
     
-    # 1. Extraer información del remitente y contenido
+    # 1. Extraer información del remitente
     sender_phone = data.get('senderPhoneNumber', 'Desconocido')
     message_id = data.get('messageId', 'ID_No_Disponible')
     timestamp = data.get('sendTime', 'Timestamp_No_Disponible')
-    
-    message_content = data.get('textEvent', {})
-    text_content = message_content.get('text', 'Mensaje sin texto')
 
-    # 2. Imprimir cabecera del mensaje procesado
+    # 2. Extraer el contenido del mensaje de forma flexible
+    message_content = data.get('textEvent', {}) # Busca en el contenido del evento
+    text_content = message_content.get('text') # Extrae el texto de ahí
+    
+    # Si no lo encontró, busca en la raíz del mensaje (para mensajes simples)
+    if not text_content:
+        text_content = data.get('text', 'Mensaje sin texto')
+
+    # 3. Imprimir cabecera del mensaje procesado
     print("\n" + "="*50)
     print(f"💬 NUEVO MENSAJE RECIBIDO DE: {sender_phone}")
     print("="*50)
@@ -231,7 +236,7 @@ def handle_message(data):
     print(f"⏰ Enviado a las: {timestamp}")
     print("="*50 + "\n")
 
-    # 3. Lógica de Negocio (Aquí es donde tú añadirías tu código)
+    # 4. Lógica de Negocio (Aquí es donde tú añadirías tu código)
     if "hola" in text_content.lower():
         print("🤖 Se detectó un saludo. Aquí podrías enviar una respuesta automática.")
     
