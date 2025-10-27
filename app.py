@@ -7,7 +7,8 @@ import base64
 import json
 import os
 from datetime import datetime
-
+# --- NUEVO: Importar la librería de PostgreSQL ---
+import psycopg2
 app = Flask(__name__)
 
 # Configuración
@@ -18,6 +19,71 @@ PORT = int(os.getenv('PORT', 5000))
 import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+# --- NUEVO: FUNCIONES PARA INTERACTUAR CON POSTGRESQL ---
+
+def get_db_connection():
+    """Crea y devuelve una conexión a la base de datos PostgreSQL."""
+    DATABASE_URL = os.environ.get('DATABASE_URL')
+    if not DATABASE_URL:
+        logger.error("❌ La variable de entorno DATABASE_URL no está configurada.")
+        return None
+    return psycopg2.connect(DATABASE_URL)
+
+def create_table_if_not_exists():
+    """Crea la tabla 'mensajes' si no existe."""
+    conn = get_db_connection()
+    if conn is None:
+        return False
+
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS mensajes (
+                id SERIAL PRIMARY KEY,
+                sender_phone VARCHAR(50) NOT NULL,
+                text_content TEXT,
+                postback_data TEXT,
+                message_id VARCHAR(255) UNIQUE,
+                received_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            );
+        """)
+        conn.commit()
+        cur.close()
+        conn.close()
+        logger.info("✅ Tabla 'mensajes' verificada/creada correctamente.")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Error al crear la tabla: {e}")
+        return False
+
+def save_message_to_db(sender_phone, text_content, postback_data, message_id):
+    """Guarda un mensaje recibido en la base de datos."""
+    conn = get_db_connection()
+    if conn is None:
+        return False
+
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO mensajes (sender_phone, text_content, postback_data, message_id)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (message_id) DO NOTHING;
+            """,
+            (sender_phone, text_content, postback_data, message_id)
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+        logger.info(f"✅ Mensaje de '{sender_phone}' guardado en la base de datos.")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Error al guardar el mensaje en la BD: {e}")
+        return False
+
+# --- FIN DE LAS FUNCIONES DE POSTGRESQL ---
 
 
 def verify_signature(request_data, signature_header):
@@ -145,15 +211,15 @@ def webhook():
            # 3. Llamar al manejador correcto con los datos desempaquetados
             if message_type == 'SUGGESTION_RESPONSE':
                 handle_suggestion_response(real_data)
-            elif message_type == 'TEXT':  # <-- ¡AÑADE ESTA LÍNEA!
+            elif message_type == 'TEXT':
                 handle_message(real_data)
-            elif message_type == 'message': # Este se queda como fallback
+            elif message_type == 'message':
                 handle_message(real_data)
             else:
                 logger.warning(f"⚠️ Tipo de mensaje no manejado: {message_type}")
 
         else:
-            # --- ES UN MENSAJE DIRECTO (como el de curl o la verificación) ---
+            # --- ES UN MENSAJE DIRECTO ---
             logger.info("📬 Mensaje detectado en formato directo.")
             
             # Usar la lógica original para determinar el tipo de evento
@@ -204,12 +270,11 @@ def detect_event_type(data):
 
 
 # =============================================================================
-# FUNCIÓN MEJORADA PARA MANEJAR MENSAJES (ahora recibe datos ya procesados)
+# FUNCIÓN MEJORADA PARA MANEJAR MENSAJES (AHORA GUARDA EN BD)
 # =============================================================================
 def handle_message(data):
     """
-    Procesa los mensajes de texto o con contenido rico.
-    Ahora busca el texto en las claves correctas tanto para mensajes simples como complejos.
+    Procesa los mensajes de texto y los guarda en la base de datos.
     """
     logger.info("🚀 Iniciando procesamiento de un nuevo mensaje...")
     
@@ -218,9 +283,8 @@ def handle_message(data):
     message_id = data.get('messageId', 'ID_No_Disponible')
     timestamp = data.get('sendTime', 'Timestamp_No_Disponible')
 
-    # 2. Extraer el contenido del mensaje de forma flexible
-    message_content = data.get('textEvent', {}) # Busca en el contenido del evento
-    text_content = message_content.get('text') # Extrae el texto de ahí
+    message_content = data.get('textEvent', {})
+    text_content = message_content.get('text')
     
     # Si no lo encontró, busca en la raíz del mensaje (para mensajes simples)
     if not text_content:
@@ -236,20 +300,18 @@ def handle_message(data):
     print(f"⏰ Enviado a las: {timestamp}")
     print("="*50 + "\n")
 
-    # 4. Lógica de Negocio (Aquí es donde tú añadirías tu código)
-    if "hola" in text_content.lower():
-        print("🤖 Se detectó un saludo. Aquí podrías enviar una respuesta automática.")
+    # --- NUEVO: GUARDAR EL MENSAJE EN LA BASE DE DATOS ---
+    save_message_to_db(sender_phone, text_content, None, message_id)
     
     logger.info(f"✅ Mensaje de '{sender_phone}' procesado correctamente.")
 
 
 # =============================================================================
-# FUNCIÓN PARA MANEJAR RESPUESTAS A SUGERENCIAS
+# FUNCIÓN PARA MANEJAR RESPUESTAS A SUGERENCIAS (AHORA GUARDA EN BD)
 # =============================================================================
 def handle_suggestion_response(data):
     """
-    Maneja respuestas a sugerencias (botones, acciones sugeridas).
-    Asume que 'data' es el JSON ya desempaquetado y limpio.
+    Maneja respuestas a sugerencias y las guarda en la base de datos.
     """
     logger.info("🚀 Iniciando procesamiento de una respuesta a sugerencia...")
     
@@ -267,7 +329,9 @@ def handle_suggestion_response(data):
     print(f"   Postback Data: '{postback_data}'")
     print("="*50 + "\n")
 
-    # TODO: Implementar lógica según el postback
+    # --- NUEVO: GUARDAR LA RESPUESTA EN LA BASE DE DATOS ---
+    save_message_to_db(sender_phone, text, postback_data, message_id)
+    
     logger.info(f"✅ Respuesta a sugerencia de '{sender_phone}' procesada correctamente.")
 
 
@@ -297,6 +361,13 @@ def health():
         'timestamp': datetime.utcnow().isoformat(),
         'secret_configured': bool(SECRET_KEY)
     }), 200
+
+
+# --- NUEVO: CREAR LA TABLA AL INICIAR LA APLICACIÓN ---
+# Esto asegura que la tabla exista antes de que llegue el primer mensaje.
+with app.app_context():
+    create_table_if_not_exists()
+# --- FIN DE LA NUEVA SECCIÓN ---
 
 
 if __name__ == '__main__':
